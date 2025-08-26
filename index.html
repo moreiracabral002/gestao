@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Controle de Gastos</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+h1,h2,h3 { color:#333; }
+form,.filtro,.categorias { margin-bottom: 20px; }
+input, select, button { margin:5px; padding:5px; }
+table { border-collapse: collapse; width:100%; margin-top:10px; }
+th, td { border:1px solid #ccc; padding:8px; text-align:center; }
+th { background-color:#f4f4f4; }
+button.excluir { background-color:#e74c3c; color:#fff; border:none; padding:5px 10px; cursor:pointer; }
+button.editar { background-color:#3498db; color:#fff; border:none; padding:5px 10px; cursor:pointer; margin-right:5px; }
+</style>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
+
+<h1>Controle de Gastos e Ganhos</h1>
+
+<form id="form">
+<label>Tipo:</label>
+<select id="tipo">
+<option value="Ganho">Ganho</option>
+<option value="Gasto">Gasto</option>
+</select>
+<label>Descrição:</label>
+<input type="text" id="descricao" required placeholder="Descrição">
+<label>Valor:</label>
+<input type="number" id="valor" step="0.01" required placeholder="0.00">
+<label>Categoria:</label>
+<select id="categoria" required></select>
+<label>Data:</label>
+<input type="date" id="data" required>
+<button type="submit">Adicionar</button>
+</form>
+
+<div class="filtro">
+<h2>Filtrar</h2>
+<label>Mês:</label>
+<select id="filtroMes">
+<option value="todos">Todos os meses</option>
+<option value="0">Janeiro</option>
+<option value="1">Fevereiro</option>
+<option value="2">Março</option>
+<option value="3">Abril</option>
+<option value="4">Maio</option>
+<option value="5">Junho</option>
+<option value="6">Julho</option>
+<option value="7">Agosto</option>
+<option value="8">Setembro</option>
+<option value="9">Outubro</option>
+<option value="10">Novembro</option>
+<option value="11">Dezembro</option>
+</select>
+
+<label>Categoria:</label>
+<select id="filtroCategoria">
+<option value="todos">Todas as categorias</option>
+</select>
+
+<label>Data Inicial:</label>
+<input type="date" id="dataInicial">
+<label>Data Final:</label>
+<input type="date" id="dataFinal">
+<button id="btnFiltrar">Aplicar Filtro</button>
+<button id="btnReset">Limpar Filtro</button>
+</div>
+
+<h2>Ganhos</h2>
+<table id="tabelaGanhos">
+<thead>
+<tr><th>Descrição</th><th>Valor</th><th>Categoria</th><th>Data</th><th>Ações</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<h2>Gastos</h2>
+<table id="tabelaGastos">
+<thead>
+<tr><th>Descrição</th><th>Valor</th><th>Categoria</th><th>Data</th><th>Ações</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<h2>Resumo</h2>
+<p>Total de Ganhos: R$ <span id="totalGanhos">0.00</span></p>
+<p>Total de Gastos: R$ <span id="totalGastos">0.00</span></p>
+<p>Saldo: R$ <span id="saldo">0.00</span></p>
+
+<button id="btnBackupFirebase">🔄 Fazer Backup no Firebase</button>
+
+<div class="categorias">
+<h2>Criar Categoria</h2>
+<label>Tipo:</label>
+<select id="tipoCategoria">
+<option value="Ganho">Ganho</option>
+<option value="Gasto">Gasto</option>
+</select>
+<label>Nome da Categoria:</label>
+<input type="text" id="nomeCategoria" placeholder="Nova categoria">
+<button id="btnAdicionarCategoria">Adicionar Categoria</button>
+
+<h3>Lista de Categorias</h3>
+<ul id="listaCategorias"></ul>
+</div>
+
+<script>
+const firebaseConfig = {
+apiKey: "AIzaSyCzoPfT4IvlFsCqVi-nwSjlMrau-t5uzOo",
+authDomain: "gestao-d7758.firebaseapp.com",
+projectId: "gestao-d7758",
+storageBucket: "gestao-d7758.firebasestorage.app",
+messagingSenderId: "625993183394",
+appId: "1:625993183394:web:81b93f5f05a47d0d9167fb"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// Elementos
+const tipoInput = document.getElementById("tipo");
+const descricaoInput = document.getElementById("descricao");
+const valorInput = document.getElementById("valor");
+const dataInput = document.getElementById("data");
+const categoriaSelect = document.getElementById("categoria");
+
+const tipoCategoria = document.getElementById("tipoCategoria");
+const nomeCategoria = document.getElementById("nomeCategoria");
+const btnAdicionarCategoria = document.getElementById("btnAdicionarCategoria");
+const listaCategorias = document.getElementById("listaCategorias");
+
+const filtroMes = document.getElementById("filtroMes");
+const filtroCategoria = document.getElementById("filtroCategoria");
+const dataInicialInput = document.getElementById("dataInicial");
+const dataFinalInput = document.getElementById("dataFinal");
+const btnFiltrar = document.getElementById("btnFiltrar");
+const btnReset = document.getElementById("btnReset");
+
+const tabelaGanhos = document.querySelector("#tabelaGanhos tbody");
+const tabelaGastos = document.querySelector("#tabelaGastos tbody");
+
+const totalGanhosEl = document.getElementById("totalGanhos");
+const totalGastosEl = document.getElementById("totalGastos");
+const saldoEl = document.getElementById("saldo");
+
+const btnBackupFirebase = document.getElementById("btnBackupFirebase");
+
+let categorias = { Ganho: ["Salário","Outros"], Gasto: ["Alimentação","Transporte","Lazer"] };
+let registros = [];
+let totalGanhos = 0;
+let totalGastos = 0;
+let editandoLinha = null;
+let editandoTipo = null;
+
+// Atualizações de categorias
+function atualizarCategorias() {
+categoriaSelect.innerHTML="";
+categorias[tipoInput.value].forEach(c=>{
+let option=document.createElement("option");
+option.value=c;
+option.textContent=c;
+categoriaSelect.appendChild(option);
+});
+}
+
+function atualizarFiltroCategorias() {
+filtroCategoria.innerHTML='<option value="todos">Todas as categorias</option>';
+[...categorias.Ganho,...categorias.Gasto].forEach(c=>{
+let option=document.createElement("option");
+option.value=c;
+option.textContent=c;
+filtroCategoria.appendChild(option);
+});
+}
+
+function atualizarListaCategorias() {
+const tipo=tipoCategoria.value;
+listaCategorias.innerHTML="";
+categorias[tipo].forEach((cat,index)=>{
+let li=document.createElement("li");
+li.textContent=cat+" ";
+
+let btnEditar=document.createElement("button");
+btnEditar.textContent="Editar";
+btnEditar.classList.add("editar");
+btnEditar.addEventListener("click",async ()=>{
+const novoNome=prompt("Digite o novo nome da categoria:",cat);
+if(novoNome && novoNome.trim()!==""){
+const antigo=categorias[tipo][index];
+categorias[tipo][index]=novoNome.trim();
+registros.forEach(r=>{if(r.categoria===antigo && r.tipo===tipo) r.categoria=novoNome.trim();});
+atualizarCategorias();
+atualizarFiltroCategorias();
+atualizarListaCategorias();
+salvarLocalStorage();
+await backupFirebase();
+atualizarTabelaCompleta();
+}
+});
+li.appendChild(btnEditar);
+
+let btnExcluir=document.createElement("button");
+btnExcluir.textContent="Excluir";
+btnExcluir.classList.add("excluir");
+btnExcluir.addEventListener("click",async ()=>{
+if(confirm(`Deseja realmente excluir a categoria "${cat}"?`)){
+const antigo=categorias[tipo][index];
+categorias[tipo].splice(index,1);
+registros.forEach(r=>{if(r.categoria===antigo && r.tipo===tipo) r.categoria="";});
+atualizarCategorias();
+atualizarFiltroCategorias();
+atualizarListaCategorias();
+salvarLocalStorage();
+await backupFirebase();
+atualizarTabelaCompleta();
+}
+});
+li.appendChild(btnExcluir);
+listaCategorias.appendChild(li);
+});
+}
+
+btnAdicionarCategoria.addEventListener("click",async e=>{
+e.preventDefault();
+const tipo=tipoCategoria.value;
+const nome=nomeCategoria.value.trim();
+if(!nome) return alert("Digite um nome para a categoria!");
+if(categorias[tipo].some(c=>c.toLowerCase()===nome.toLowerCase())) return alert("Categoria já existe!");
+categorias[tipo].push(nome);
+nomeCategoria.value="";
+atualizarCategorias();
+atualizarFiltroCategorias();
+atualizarListaCategorias();
+salvarLocalStorage();
+await backupFirebase();
+});
+
+tipoCategoria.addEventListener("change",atualizarListaCategorias);
+tipoInput.addEventListener("change",atualizarCategorias);
+
+// Tabela e resumo
+function atualizarResumo(){
+totalGanhosEl.innerText=totalGanhos.toFixed(2);
+totalGastosEl.innerText=totalGastos.toFixed(2);
+saldoEl.innerText=(totalGanhos-totalGastos).toFixed(2);
+}
+
+function atualizarTabelaCompleta(){
+tabelaGanhos.innerHTML="";
+tabelaGastos.innerHTML="";
+totalGanhos=0;
+totalGastos=0;
+
+registros.forEach(r=>{
+const row=(r.tipo==="Ganho"?tabelaGanhos:tabelaGastos).insertRow();
+row.insertCell(0).innerText=r.descricao;
+row.insertCell(1).innerText=r.valor.toFixed(2);
+row.insertCell(2).innerText=r.categoria;
+row.insertCell(3).innerText=r.data;
+
+const cellAcoes=row.insertCell(4);
+const btnEditar=document.createElement("button");
+btnEditar.classList.add("editar");
+btnEditar.textContent="Editar";
+btnEditar.addEventListener("click",()=>{
+descricaoInput.value=row.cells[0].innerText;
+valorInput.value=row.cells[1].innerText;
+dataInput.value=row.cells[3].innerText;
+tipoInput.value=r.tipo;
+categoriaSelect.value=row.cells[2].innerText;
+editandoLinha=row;
+editandoTipo=r.tipo;
+});
+cellAcoes.appendChild(btnEditar);
+
+const btnExcluir=document.createElement("button");
+btnExcluir.classList.add("excluir");
+btnExcluir.textContent="Excluir";
+btnExcluir.addEventListener("click",async ()=>{
+if(r.tipo==="Ganho") totalGanhos-=r.valor;
+else totalGastos-=r.valor;
+row.remove();
+registros=registros.filter(reg2=>reg2!==r);
+salvarLocalStorage();
+await backupFirebase();
+atualizarResumo();
+});
+cellAcoes.appendChild(btnExcluir);
+
+if(r.tipo==="Ganho") totalGanhos+=r.valor;
+else totalGastos+=r.valor;
+
+r.linha=row;
+});
+atualizarResumo();
+}
+
+// Adicionar registro
+document.getElementById("form").addEventListener("submit",async e=>{
+e.preventDefault();
+const tipo=tipoInput.value;
+const descricao=descricaoInput.value;
+const valor=parseFloat(valorInput.value);
+const data=dataInput.value;
+const categoria=categoriaSelect.value;
+if(!categoria) return alert("Selecione uma categoria!");
+if(editandoLinha){
+if(editandoTipo==="Ganho") totalGanhos-=parseFloat(editandoLinha.cells[1].innerText);
+else totalGastos-=parseFloat(editandoLinha.cells[1].innerText);
+
+editandoLinha.cells[0].innerText=descricao;
+editandoLinha.cells[1].innerText=valor.toFixed(2);
+editandoLinha.cells[2].innerText=categoria;
+editandoLinha.cells[3].innerText=data;
+
+const registro=registros.find(r=>r.linha===editandoLinha);
+registro.descricao=descricao;
+registro.valor=valor;
+registro.data=data;
+registro.categoria=categoria;
+
+if(editandoTipo==="Ganho") totalGanhos+=valor;
+else totalGastos+=valor;
+
+editandoLinha=null;
+editandoTipo=null;
+} else {
+registros.push({tipo,descricao,valor,data,categoria,linha:null});
+}
+
+atualizarTabelaCompleta();
+salvarLocalStorage();
+await backupFirebase();
+form.reset();
+});
+
+// Filtros
+btnFiltrar.addEventListener("click",()=>{
+const mesSelecionado=filtroMes.value;
+const categoriaSelecionada=filtroCategoria.value;
+const inicio=dataInicialInput.value?new Date(dataInicialInput.value):null;
+const fim=dataFinalInput.value?new Date(dataFinalInput.value):null;
+
+tabelaGanhos.innerHTML="";
+tabelaGastos.innerHTML="";
+totalGanhos=0;
+totalGastos=0;
+
+registros.forEach(r=>{
+const dataRegistro=new Date(r.data);
+const mesRegistro=dataRegistro.getMonth();
+const filtroMesOk=mesSelecionado==="todos" || parseInt(mesSelecionado)===mesRegistro;
+const filtroCategoriaOk=categoriaSelecionada==="todos" || r.categoria===categoriaSelecionada;
+const filtroDataOk=(!inicio||dataRegistro>=inicio) && (!fim||dataRegistro<=fim);
+if(filtroMesOk && filtroCategoriaOk && filtroDataOk){
+const row=(r.tipo==="Ganho"?tabelaGanhos:tabelaGastos).insertRow();
+row.insertCell(0).innerText=r.descricao;
+row.insertCell(1).innerText=r.valor.toFixed(2);
+row.insertCell(2).innerText=r.categoria;
+row.insertCell(3).innerText=r.data;
+
+const cellAcoes=row.insertCell(4);
+const btnEditar=document.createElement("button");
+btnEditar.innerText="Editar";
+btnEditar.classList.add("editar");
+btnEditar.addEventListener("click",()=>{
+descricaoInput.value=row.cells[0].innerText;
+valorInput.value=row.cells[1].innerText;
+dataInput.value=row.cells[3].innerText;
+tipoInput.value=r.tipo;
+categoriaSelect.value=row.cells[2].innerText;
+editandoLinha=row;
+editandoTipo=r.tipo;
+});
+cellAcoes.appendChild(btnEditar);
+
+const btnExcluir=document.createElement("button");
+btnExcluir.innerText="Excluir";
+btnExcluir.classList.add("excluir");
+btnExcluir.addEventListener("click",async ()=>{
+if(r.tipo==="Ganho") totalGanhos-=r.valor;
+else totalGastos-=r.valor;
+row.remove();
+registros=registros.filter(reg2=>reg2!==r);
+salvarLocalStorage();
+await backupFirebase();
+atualizarResumo();
+});
+cellAcoes.appendChild(btnExcluir);
+
+if(r.tipo==="Ganho") totalGanhos+=r.valor;
+else totalGastos+=r.valor;
+
+r.linha=row;
+}
+});
+
+atualizarResumo();
+});
+
+btnReset.addEventListener("click",()=>{
+filtroMes.value="todos";
+filtroCategoria.value="todos";
+dataInicialInput.value="";
+dataFinalInput.value="";
+atualizarTabelaCompleta();
+});
+
+// Backup Firebase
+async function backupFirebase(){
+try{
+await db.collection("categorias").doc("listaCategorias").set(categorias);
+
+const ganhosRef=db.collection("ganhos");
+const ganhosSnapshot=await ganhosRef.get();
+ganhosSnapshot.docs.forEach(doc=>doc.ref.delete());
+registros.filter(r=>r.tipo==="Ganho").forEach(r=>{
+ganhosRef.add({descricao:r.descricao,valor:r.valor,categoria:r.categoria,data:r.data});
+});
+
+const gastosRef=db.collection("gastos");
+const gastosSnapshot=await gastosRef.get();
+gastosSnapshot.docs.forEach(doc=>doc.ref.delete());
+registros.filter(r=>r.tipo==="Gasto").forEach(r=>{
+gastosRef.add({descricao:r.descricao,valor:r.valor,categoria:r.categoria,data:r.data});
+});
+
+console.log("Backup realizado com sucesso!");
+}catch(err){console.error("Erro ao realizar backup no Firebase:",err);}
+}
+
+btnBackupFirebase.addEventListener("click",async ()=>{
+await backupFirebase();
+alert("Backup enviado para Firebase!");
+});
+
+// Sincronizar Firebase ao abrir
+async function sincronizarFirebase(){
+try{
+const catDoc=await db.collection("categorias").doc("listaCategorias").get();
+if(catDoc.exists) categorias=catDoc.data();
+
+const ganhosSnapshot=await db.collection("ganhos").get();
+registros=ganhosSnapshot.docs.map(doc=>({tipo:"Ganho",...doc.data()}));
+
+const gastosSnapshot=await db.collection("gastos").get();
+registros=registros.concat(gastosSnapshot.docs.map(doc=>({tipo:"Gasto",...doc.data()})));
+
+atualizarCategorias();
+atualizarFiltroCategorias();
+atualizarListaCategorias();
+atualizarTabelaCompleta();
+salvarLocalStorage();
+}catch(err){console.error("Erro ao sincronizar Firebase:",err);}
+}
+
+window.addEventListener("load",async ()=>{await sincronizarFirebase();});
+atualizarCategorias();
+atualizarFiltroCategorias();
+atualizarListaCategorias();
+atualizarTabelaCompleta();
+</script>
+</body>
+</html>
